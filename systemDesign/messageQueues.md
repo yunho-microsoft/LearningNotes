@@ -15,7 +15,14 @@
 - Clearer Architecture: Define clear boundaries between microservices, making systems easier to develop, test, and maintain. 
 
 ## Key points
-- Kafka vs AWS SQS vs Redis+Celery vs RabbitMQ vs Redis Stream
+
+- Batch process vs stream process
+
+    Batch process: process a very large volume of data in a single workload
+
+    Stream process: process small units continuously in real-time flow
+
+- Stream process framework: Kafka vs AWS SQS vs Redis+Celery vs Redis Stream vs RabbitMQ
 
 - stream processing (Flink)
 - Batch processing (spark)
@@ -31,11 +38,36 @@
 
 1. How does it make sure messages are not lost?
 
-1. At least once or at most once?
+    Most queue services have at least once guarantee (with some ack mechanism implemented).
+
+1. At Least Once or At Most Once or Exactly Once?
+    
+    Usually queue services guarantees at least once to make sure messages are not lost. In reality, strict exactly once delivery is impossible, but it can be achieved with some nuances, which is called Effectively-Once (for example, the consuming logic has some deduplicate logic or is idempotent. Then the entire pipeline can be thought as effectively once).
+
+    [References](https://nryanov.com/overview/messaging/delivery-semantics/processing-semantics/exactly-once/at-least-once/at-most-once/delivery-and-processing-semantics/#delivery-semantics-overview-)
+
+1. How does it make sure messages are consumed in order?
+It usually requires queue services to have a single consumer to make sure all messages are delivered in order.
+If multiple consumers lisen for the same queue, it is possible that some messages are processed earlier due to consumer issues.
+
+    All queue services have similar features
+
+    | Kafka | Redis stream | RabbitMQ |
+    | - | -| - |
+    | Each partition in a consumer group can only have one consumer and it guarantees that messages consumed in order within a partition | A single consumer on the queue guarantee the messages delivered in order | A single consumer on the queue guarantee the messages delivered in order |
+
 
 1. How does it distribute messages?
-Multiple worker consume same queue to distribute the load?
-Fan out messages: each consumer receive replica of messages?
+
+    Multiple worker consume same queue to distribute the load?
+    
+    Fan out messages: each consumer receive replica of messages?
+
+1. How to limit the queue size?
+
+    | Kafka | Redis stream | RabbitMQ |
+    | - | -| - |
+    | Kafka has data retiontion policy, either by time (retiontion.hours) or by size (retiontion.bytes). Older messages are removed if a message is older than the retention duration or the topic's segment is larger than the limit | User need to explicitly trim or delete messages from Redis stream | RabbitMQ queue size can be set by user. A message is marked for deletion once acknowledged by consumer. |
 
 ## Kafka
 
@@ -91,6 +123,20 @@ Consumer needs to commit the offset (committed position), which will be used to 
 
 Kafka does not have explicit retry logic: when a consumer fails to process a message, it does not commit the offset within the timeout. The message is not considered consumed and will be delivered to next consumer when it reconnects to the partition
 
+### Kafka session.timeout.ms vs max.poll.interval.ms
+
+- session.timeout.ms:
+
+    The timeout used to detect client failures when using Kafka’s group management facility. The client sends periodic heartbeats to indicate its liveness to the broker. If no heartbeats are received by the broker before the expiration of this session timeout, then the broker will remove this client from the group and initiate a rebalance.
+
+- max.poll.interval.ms
+
+    The maximum delay between invocations of poll() when using consumer group management. This places an upper bound on the amount of time that the consumer can be idle before fetching more records. If poll() is not called before expiration of this timeout, then the consumer is considered failed and the group will rebalance in order to reassign the partitions to another member.
+
+- Differences:
+
+    session.timeout.ms controls the heartbeat and max.poll.interval.ms controls the maximum time a task should take to process. This separation makes it possible to set a longer process time without affecting the heartbeat interval (detect earlier failures when processing time is long). But expiration of either period will trigger a rebalance.
+
 ### Push vs pull model
 Kafka queue use pull stratgy (consumer pull messages from server), reference: https://docs.confluent.io/kafka/design/consumer-design.html#push-versus-pull-design
 
@@ -141,9 +187,25 @@ Kafka community is moving to KRaft from Zookeeper. Starting from Kafka version 4
     
     [Partitions and Data Performance, part 2](https://www.instaclustr.com/blog/apache-kafka-kraft-abandons-the-zookeeper-part-2-partitions-and-meta-data-performance/)
 
+### When should use Kafka:
+
+Use Kafka when:
+    - Need to replay events
+    - Streaming events in high throughput: large amount of real time messages 
+    - Process events in order (order is guaranteed within a partition)
+
+
+Do NOT use Kafka when:
+    - Long running tasks: Kafka relies on consumer to commit offset and not retry logic on failed messages.
+    - Complex routing mechanism
+    - Simply pub sub: Kafka is heavy and overkill for simple pub sub scenarios
+    - Low latency (<10 ms>). Kafka P99 latency is around 100-200ms in a cloud environment
 
 
 ## RabbitMQ
+
+### Message acknowledgement
+[reference](https://www.rabbitmq.com/tutorials/tutorial-two-go#:~:text=Message%20acknowledgment%E2%80%8B,if%20the%20workers%20occasionally%20die.)
 
 ## Redis Stream
 - Reference: https://redis.io/docs/latest/develop/data-types/streams/
@@ -165,3 +227,16 @@ A stream can have multiple clients (consumers) waiting for data. Every new item,
     In a single Redis stream, multi coonsumers in a consumer group can receive message out of order. To achieve Kafka partitions, you have to use multiple keys and some sharding system such as Redis Cluster or some other application-specific sharding system.
 
     Basically Kafka partitions are more similar to using N different Redis keys, while Redis consumer groups are a server-side load balancing system of messages from a given stream to N different consumers.
+
+
+## Spark
+
+TBD
+
+Is it data processing framework rather than temporary message storage and transporting?
+
+Spark was created to address the limitations to MapReduce, by doing processing in-memory, reducing the number of steps in a job, and by reusing data across multiple parallel operations. [reference](https://aws.amazon.com/what-is/apache-spark/)
+
+## Flink
+
+TBD

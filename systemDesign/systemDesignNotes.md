@@ -15,6 +15,7 @@
 - Consistent hashing
 
 Storage?
+
 - OLAP vs OLTP: OLTP (Online Transaction Processing) and OLAP (Online Analytical Processing)
 - ELK: Elastic stack?
 
